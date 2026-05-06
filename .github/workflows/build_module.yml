@@ -3,81 +3,100 @@ name: Build Kernel Headers
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  build-headers:
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout kernel source
-      uses: actions/checkout@v4
-      with:
-        repository: Grego1801/kernel_samsung_sm8250
-        fetch-depth: 1
+      - name: Check Out
+        uses: actions/checkout@v3
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git make bc bison flex \
-          libssl-dev libelf-dev \
-          python3 zip unzip \
-          gcc-aarch64-linux-gnu \
-          binutils-aarch64-linux-gnu \
-          gcc-arm-linux-gnueabi \
-          cpio clang-14 lld-14 llvm-14
+      - name: Set Timezone
+        uses: szenius/set-timezone@v1.2
+        with:
+          timezoneLinux: "America/Sao_Paulo"
 
-    - name: Setup Clang
-      run: |
-        mkdir -p $HOME/clang/bin
-        for tool in clang clang++ ld.lld llvm-ar llvm-nm \
-                    llvm-objcopy llvm-objdump llvm-strip; do
-          ln -sf /usr/bin/${tool}-14 $HOME/clang/bin/${tool}
-        done
-        echo "$HOME/clang/bin" >> $GITHUB_PATH
+      - name: Setting up the environment
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            git make bc bison flex \
+            libssl-dev libelf-dev \
+            python3 zip unzip \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            cpio clang-14 lld-14 llvm-14
 
-    - name: Add KernelSU
-      run: |
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+      - name: Setup Clang
+        run: |
+          mkdir -p $HOME/clang/bin
+          for tool in clang clang++ ld.lld llvm-ar llvm-nm \
+                      llvm-objcopy llvm-objdump llvm-strip; do
+            ln -sf /usr/bin/${tool}-14 $HOME/clang/bin/${tool}
+          done
+          echo "$HOME/clang/bin" >> $GITHUB_PATH
 
-    - name: Build kernel headers
-      run: |
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export CC=clang
-        export CLANG_TRIPLE=aarch64-linux-gnu-
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export ANDROID_MAJOR_VERSION=r
-        export PLATFORM_VERSION=11
+      - name: Fix KernelSU Kconfig
+        run: |
+          mkdir -p drivers/kernelsu
+          cat > drivers/kernelsu/Kconfig << 'EOF'
+          menu "KernelSU"
 
-        make O=out \
-          ARCH=arm64 CC=clang \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          vendor/kona-perf_defconfig
+          config KSU
+            tristate "KernelSU function support"
+            default n
+            help
+              Enable KernelSU
 
-        echo "CONFIG_MODULES=y" >> out/.config
-        echo "CONFIG_MODULE_UNLOAD=y" >> out/.config
+          endmenu
+          EOF
+          cat > drivers/kernelsu/Makefile << 'EOF'
+          # empty
+          EOF
 
-        make O=out \
-          ARCH=arm64 CC=clang \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          olddefconfig
+      - name: Build Kernel Headers
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export ANDROID_MAJOR_VERSION=r
+          export PLATFORM_VERSION=11
 
-        make -j$(nproc) O=out \
-          ARCH=arm64 CC=clang \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          ANDROID_MAJOR_VERSION=r \
-          scripts prepare modules_prepare
+          make O=out \
+            ARCH=arm64 CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            vendor/kona-perf_defconfig
 
-    - name: Package headers
-      run: |
-        tar -czf kernel-headers.tar.gz out/
+          echo "CONFIG_MODULES=y" >> out/.config
+          echo "CONFIG_MODULE_UNLOAD=y" >> out/.config
 
-    - name: Upload kernel headers
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-headers
-        path: kernel-headers.tar.gz
-        retention-days: 90
+          make O=out \
+            ARCH=arm64 CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+          make -j$(nproc) O=out \
+            ARCH=arm64 CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            ANDROID_MAJOR_VERSION=r \
+            scripts prepare modules_prepare
+
+      - name: Package Headers
+        run: |
+          tar -czf kernel-headers.tar.gz out/
+
+      - name: Upload Kernel Headers
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-headers
+          path: kernel-headers.tar.gz
+          retention-days: 90
