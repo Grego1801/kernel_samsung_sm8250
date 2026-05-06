@@ -42,6 +42,7 @@ jobs:
 
       - name: Fix KernelSU Kconfig
         run: |
+          rm -rf drivers/kernelsu
           mkdir -p drivers/kernelsu
           cat > drivers/kernelsu/Kconfig << 'EOF'
           menu "KernelSU"
