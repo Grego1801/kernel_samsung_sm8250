@@ -1,0 +1,115 @@
+name: Build Hello KO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            git make bc bison flex \
+            libssl-dev libelf-dev \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            cpio clang-14 lld-14 llvm-14
+
+      - name: Setup Clang
+        run: |
+          mkdir -p $HOME/clang/bin
+          for tool in clang clang++ ld.lld llvm-ar llvm-nm \
+                      llvm-objcopy llvm-objdump llvm-strip; do
+            ln -sf /usr/bin/${tool}-14 $HOME/clang/bin/${tool}
+          done
+          echo "$HOME/clang/bin" >> $GITHUB_PATH
+
+      - name: Fix KernelSU Kconfig
+        run: |
+          rm -rf drivers/kernelsu
+          mkdir -p drivers/kernelsu
+          cat > drivers/kernelsu/Kconfig << 'EOF'
+          menu "KernelSU"
+          config KSU
+            tristate "KernelSU function support"
+            default n
+          endmenu
+          EOF
+          echo "" > drivers/kernelsu/Makefile
+
+      - name: Prepare kernel headers
+        run: |
+          export ARCH=arm64
+          export CC=clang
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export ANDROID_MAJOR_VERSION=r
+          export PLATFORM_VERSION=11
+
+          make O=out ARCH=arm64 CC=clang LD=ld.lld \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            vendor/kona-perf_defconfig
+
+          echo "CONFIG_MODULES=y" >> out/.config
+          echo "CONFIG_MODULE_UNLOAD=y" >> out/.config
+
+          make O=out ARCH=arm64 CC=clang LD=ld.lld \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            ANDROID_MAJOR_VERSION=r \
+            scripts prepare modules_prepare
+
+      - name: Create and build hello module
+        run: |
+          mkdir -p hello
+          cat > hello/hello.c << 'EOF'
+          #include <linux/init.h>
+          #include <linux/module.h>
+          #include <linux/kernel.h>
+          MODULE_LICENSE("GPL");
+          MODULE_AUTHOR("Grego1801");
+          MODULE_DESCRIPTION("Hello World");
+          static int __init hello_init(void) {
+              printk(KERN_INFO "Hello kernel!\n");
+              return 0;
+          }
+          static void __exit hello_exit(void) {
+              printk(KERN_INFO "Bye kernel!\n");
+          }
+          module_init(hello_init);
+          module_exit(hello_exit);
+          EOF
+
+          make -C $GITHUB_WORKSPACE/out \
+            M=$GITHUB_WORKSPACE/hello \
+            ARCH=arm64 CC=clang LD=ld.lld \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            modules
+
+      - name: Upload hello.ko
+        uses: actions/upload-artifact@v4
+        with:
+          name: hello-ko
+          path: hello/hello.ko
+          retention-days: 7
