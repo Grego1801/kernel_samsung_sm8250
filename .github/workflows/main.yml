@@ -38,10 +38,10 @@ jobs:
         echo "$HOME/clang/bin" >> $GITHUB_PATH
         clang --version
 
-    - name: List available defconfigs
+    - name: Show all configs in repo
       run: |
-        echo "=== Available defconfigs ==="
-        find arch/arm64/configs/ -name "*defconfig*" | sort
+        echo "=== All configs ==="
+        find arch/arm64/configs/ | sort
 
     - name: Configure kernel
       run: |
@@ -52,25 +52,25 @@ jobs:
         export CC=clang
         export CLANG_TRIPLE=aarch64-linux-gnu-
         export ANDROID_MAJOR_VERSION=r
+        export PLATFORM_VERSION=11
 
-        DEFCONFIG=$(find arch/arm64/configs -name "*kona*" -o -name "*sm8250*" \
-          | grep -v fragment | head -1 | xargs basename 2>/dev/null)
-
-        if [ -z "$DEFCONFIG" ]; then
-          DEFCONFIG=$(find arch/arm64/configs/vendor -name "*kona*" \
-            | head -1 | sed 's|arch/arm64/configs/||')
-        fi
-
-        echo "Using defconfig: $DEFCONFIG"
-        echo "DEFCONFIG=$DEFCONFIG" >> $GITHUB_ENV
-
+        # Samsung SM8250 (Kona) uses vendor/kona-perf_defconfig as base
+        # then merges samsung config fragments on top
         make O=out \
           ARCH=arm64 \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-gnu- \
-          $DEFCONFIG
+          vendor/kona-perf_defconfig
 
+        # Merge Samsung common fragment if it exists
+        if [ -f arch/arm64/configs/vendor/samsung/kona-sec-common.config ]; then
+          ./scripts/kconfig/merge_config.sh -m -O out \
+            out/.config \
+            arch/arm64/configs/vendor/samsung/kona-sec-common.config
+        fi
+
+        # Enable modules
         echo "CONFIG_MODULES=y" >> out/.config
         echo "CONFIG_MODULE_UNLOAD=y" >> out/.config
 
@@ -90,6 +90,7 @@ jobs:
         export CC=clang
         export CLANG_TRIPLE=aarch64-linux-gnu-
         export ANDROID_MAJOR_VERSION=r
+        export PLATFORM_VERSION=11
 
         make -j$(nproc) O=out \
           ARCH=arm64 \
